@@ -1,0 +1,27 @@
+# AI Usage Notes
+
+This project was built with [Claude Code](https://claude.com/claude-code) as the primary AI coding assistant, working from a single conversation end-to-end. This file describes how it was actually used, not a generic template.
+
+## Workflow
+
+**1. Planning before code.** The repo started with just the challenge brief and a bare `create-vite` scaffold — no backend, no app code. Given the size of the task, I asked Claude Code to enter plan mode rather than start writing files immediately. It read the existing scaffold, then proposed an architecture (unified `Service` data model instead of separate ambulance/doctor models, JSON-file storage vs. SQLite, npm workspaces monorepo layout, styled-components, Jest+RTL/Jest+Supertest). Before finalizing the plan it asked me two direct questions where there was a genuine trade-off rather than guessing: JSON file vs. SQLite for storage, and whether to add a geolocation-based "Near me" feature as a nice-to-have (the brief's framing — "based on location with one click" — pointed at this). I answered both, and only then did it write the plan and start implementing.
+
+**2. Scaffolding backend and frontend.** Prompts here were direct build instructions following the agreed plan: "build the store module with CRUD, pagination, filter, search logic", "write the routes and app with error handling", "build the styled-components theme and components", etc. Claude Code wrote the Express+TypeScript backend (store/routes/schema/error handling), the seed data (24 records across real-world cities, needed for the Near Me feature to be meaningful), a handful of hand-authored SVG placeholder images, and the full React+TypeScript frontend (API client, hooks, styled-components, all UI components).
+
+**3. Catching its own mistakes during implementation.** While wiring up components, Claude Code introduced and then caught two real bugs itself before I ever saw them: a `NearMeButton` that called `useGeolocation`'s `request()` but never actually forwarded the resolved coordinates to the parent (left a placeholder comment admitting the gap), and the same pattern in the location-autofill button in the add/edit form. Both were fixed by refactoring `useGeolocation` to accept a success callback instead of relying on a `useEffect` watching returned state.
+
+**4. Fixing lint/build issues for real, not by suppressing them.** The frontend scaffold's ESLint config included very new `eslint-plugin-react-hooks` rules (`set-state-in-effect`) that flagged several `setState`-in-`useEffect` patterns. Rather than disabling the rule, Claude Code refactored `useServices` to derive `loading` from comparing a request key against the last-completed key (no synchronous `setState` in the effect body), and refactored the geolocation callback wiring the same way. It only left one targeted, commented `eslint-disable` where the pattern (clamping the current page after a delete shrinks the result set) genuinely couldn't be expressed as pure derived state.
+
+**5. Getting Jest working in a Vite + `"type": "module"` project.** `import.meta.env` doesn't survive a CommonJS Babel transform, which broke every test that transitively imported the API client. Claude Code diagnosed the exact failure from the Jest stack trace and added `babel-plugin-transform-vite-meta-env`, scoped only to the Jest/Babel pipeline (Vite's own esbuild-based build is untouched).
+
+**6. Verification, not just tests passing.** After the test suites and build were green, I had Claude Code run its `/verify` process, which is explicitly designed to distrust "tests pass" as proof and instead drive the actual running app. No browser automation tool was pre-configured in this environment, so it installed `puppeteer-core` and pointed it at the system's existing Chrome to genuinely click through the UI end-to-end: pagination, tabs, search, add/edit/delete, the Near Me distance sort (with mocked geolocation), empty state, and — by killing and restarting the backend process mid-session — the error state and its recovery via the retry button. This surfaced two real things a test suite wouldn't have: the JSON store appends new records rather than sorting by recency (so a freshly-added record isn't necessarily on page 1), and the add/edit form's dialog was missing `role="dialog"`/`aria-modal` (the delete-confirmation dialog had it, the form modal didn't). The latter was fixed on the spot.
+
+## Where it helped most
+
+- **Architecture judgment calls** (unified model vs. two resources, JSON file vs. SQLite, where to put the "Near me" distance-sort logic) were surfaced as explicit decisions rather than silently picked.
+- **Catching non-obvious bugs before they shipped** — the geolocation callback gaps and the missing dialog role were both found and fixed without being asked to look for them specifically.
+- **Real verification** — actually running the app in a browser and finding the pagination/recency edge case, rather than stopping at "the test suite is green."
+
+## How output was reviewed
+
+Every backend route and store method was exercised with real HTTP requests (`curl`) against the running server, not just unit tests, before moving on. The full Jest suites (22 backend, 26 frontend) and both production builds were run and confirmed green. Finally, the running app was driven in an actual browser (see §6) rather than relying on code review alone — the two findings above only surfaced because of that step.
